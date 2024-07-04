@@ -5,6 +5,7 @@
 
 using AuthenticationServices;
 using CoreMedia;
+using GameKit;
 using Microsoft.Maui.Controls;
 using MySqlConnector;
 using System;
@@ -39,41 +40,66 @@ namespace ChessBrowser
   static class PgnReader {
     public static List<ChessGame> ReadPgnFile(string filePath) {
       var games = new List<ChessGame>();
-      var fileContent = File.ReadAllText(filePath);
-      var gameBlocks = fileContent.Split(new[] { "\n\n"}, StringSplitOptions.RemoveEmptyEntries);
+      //make sure that file is in correct directory
+      //System.Diagnostics.Debug.WriteLine($"String filepath is: {filePath}");
+      var fileLines = File.ReadAllLines(filePath);
+      var currentGame = new List<string>();
 
-      foreach (var block in gameBlocks) {
-        var game = new ChessGame();
-        var lines = block.Split("\n");
-
-        foreach (var line in lines) {
-          if (line.StartsWith("[Event "))
-            game.Event = ExtractTagValue(line);
-          else if (line.StartsWith("[Site "))
-            game.Site = ExtractTagValue(line);
-          else if (line.StartsWith("[Date "))
-            game.EventDate = ParseDate(line);
-          else if (line.StartsWith("[Round "))
-            game.Round = ExtractTagValue(line);
-          else if (line.StartsWith("[White "))
-            game.White = ExtractTagValue(line);
-          else if (line.StartsWith("[Black "))
-            game.Black = ExtractTagValue(line);
-          else if (line.StartsWith("[WhiteElo "))
-            game.WhiteElo = int.Parse(ExtractTagValue(line));
-          else if (line.StartsWith("[BlackElo "))
-            game.BlackElo = int.Parse(ExtractTagValue(line));
-          else if (line.StartsWith("[Result "))
-            game.Result = ParseResult(ExtractTagValue(line));
-          else if (line.StartsWith("[Event Date "))
-            game.EventDate = ParseDate(ExtractTagValue(line));
-          else if (string.IsNullOrWhiteSpace(line) && lines.Length > 1)
-            game.Moves = line;
+      foreach (var line in fileLines) {
+        if (string.IsNullOrWhiteSpace(line)) {
+          if (currentGame.Count > 0) {
+            games.Add(ParseGame(currentGame));
+            currentGame.Clear();
+          }
+        } else {
+          currentGame.Add(line);
         }
-        games.Add(game);
+      }
+      
+      if (currentGame.Count > 0) {
+        games.Add(ParseGame(currentGame));
       }
       return games;
     }//end of helper method read PGN file
+
+    //helper method Parsegame
+    private static ChessGame ParseGame(List<string> lines) {
+      var game = new ChessGame();
+
+      var movesStarted = false;
+      var movesSB = new StringBuilder();
+
+      foreach (var line in lines) {
+        if (line.StartsWith("[Event "))
+            game.Event = ExtractTagValue(line);
+        else if (line.StartsWith("[Site "))
+            game.Site = ExtractTagValue(line);
+        else if (line.StartsWith("[Date "))
+            game.EventDate = ParseDate(line);
+        else if (line.StartsWith("[Round "))
+            game.Round = ExtractTagValue(line);
+        else if (line.StartsWith("[White "))
+            game.White = ExtractTagValue(line);
+        else if (line.StartsWith("[Black "))
+            game.Black = ExtractTagValue(line);
+        else if (line.StartsWith("[WhiteElo "))
+            game.WhiteElo = int.Parse(ExtractTagValue(line));
+        else if (line.StartsWith("[BlackElo "))
+            game.BlackElo = int.Parse(ExtractTagValue(line));
+        else if (line.StartsWith("[Result "))
+            game.Result = ParseResult(ExtractTagValue(line));
+        else if (line.StartsWith("[Event Date "))
+            game.EventDate = ParseDate(ExtractTagValue(line));
+        else if (string.IsNullOrWhiteSpace(line) && lines.Count > 0)
+            movesStarted = true;
+
+        if (movesStarted)
+          movesSB.Append(line).Append(' ');
+      }
+      game.Moves = movesSB.ToString().Trim();
+
+      return game;
+    }//end of parseGame helper method
 
     //Extracts the value of pgn line
     //matches any text within "" and captures inner content
@@ -87,6 +113,7 @@ namespace ChessBrowser
       //tries to parse
       //replaces any ? to 01
       //out key word passes arguments to methods as reference type
+      date = date.Replace('.', '-');
       if (DateTime.TryParse(date.Replace("??", "01"), out DateTime parsedDate))
           return parsedDate;
       //if parsing fails; returns a min value
@@ -146,14 +173,14 @@ namespace ChessBrowser
       //inserts data into the Events table
       static async Task InsertEvent(MySqlConnection conn, ChessGame game) {
         var cmd = new MySqlCommand("INSERT INTO Events (Name, Site, Date) VALUES (@Name, @Site, @Date) ON DUPLICATE KEY UPDATE Name = Name", conn);
-        //uses the class member variables to extract propoer values
+        //uses the class member variables to extract proper values
         cmd.Parameters.AddWithValue("@Name", game.Event);
         cmd.Parameters.AddWithValue("@Site", game.Site);
         cmd.Parameters.AddWithValue("@Date", game.EventDate);
         await cmd.ExecuteNonQueryAsync();
-      }
+      } //in this block it stops // error processing variable
       static async Task InsertPlayer(MySqlConnection conn, string playerName, int elo) {
-        var cmd = new MySqlCommand("INSERT INTO Players (Name, Elo) VALUES (@)", conn);
+        var cmd = new MySqlCommand("INSERT INTO Players (Name, Elo) VALUES (@Name, @Elo) ON DUPLICATE KEY UPDATE Elo = GREATEST(Elo, @Elo)", conn);
         //uses the class member variables to extract propoer values
         cmd.Parameters.AddWithValue("@Name", playerName);
         cmd.Parameters.AddWithValue("@Elo", elo);
@@ -178,13 +205,13 @@ namespace ChessBrowser
         //stores new query result into blackPlayerID
         var blackPlayerId = (int)(await getEventId.ExecuteNonQueryAsync());
 
-        var cmd = new MySqlCommand("INSERT INTO Games (Round, Result, Moves, BlackPlayer, WhitePlayer, eID) VALUES (@Round, @Result, @Moves, @BlackPlayer, @WhitePlayer, @eID)");
+        var cmd = new MySqlCommand("INSERT INTO Games (Round, Result, Moves, BlackPlayer, WhitePlayer, eID) VALUES (@Round, @Result, @Moves, @BlackPlayer, @WhitePlayer, @eID)", conn);
         cmd.Parameters.AddWithValue("@Round", game.Round);
         cmd.Parameters.AddWithValue("@Result", game.Result);
         cmd.Parameters.AddWithValue("@Moves", game.Moves);
         cmd.Parameters.AddWithValue("@BlackPlayer", blackPlayerId);
         cmd.Parameters.AddWithValue("@WhitePlayer", whitePlayerId);
-        cmd.Parameters.AddWithValue("eID", eventID);
+        cmd.Parameters.AddWithValue("@eID", eventID);
         await getEventId.ExecuteNonQueryAsync();
       }//end of inner insert game
     }//end of insterGameData method
