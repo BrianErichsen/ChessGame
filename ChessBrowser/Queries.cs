@@ -38,21 +38,28 @@ namespace ChessBrowser
   //Class that provides methods to return list of chessgame given
   //path to PGN file
   static class PgnReader {
+    //this is how a list of chessgames object is created based on file given as argument
     public static List<ChessGame> ReadPgnFile(string filePath) {
       var games = new List<ChessGame>();
       //make sure that file is in correct directory
       //System.Diagnostics.Debug.WriteLine($"String filepath is: {filePath}");
       var fileLines = File.ReadAllLines(filePath);
+      //each current game is a list of strings
       var currentGame = new List<string>();
+      var movesStarted = false;
 
-      foreach (var line in fileLines) {
-        if (string.IsNullOrWhiteSpace(line)) {
-          if (currentGame.Count > 0) {
+      //this is how we partition each game
+      foreach (var line in fileLines) {//for each line
+        if (string.IsNullOrWhiteSpace(line)) {//if blank line found
+          if (currentGame.Count > 0 && !movesStarted) {//and if again next blank line is found
             games.Add(ParseGame(currentGame));
             currentGame.Clear();
           }
         } else {
           currentGame.Add(line);
+          if (line.StartsWith ("1.")) {
+            movesStarted = true;
+          }
         }
       }
       
@@ -65,9 +72,6 @@ namespace ChessBrowser
     //helper method Parsegame
     private static ChessGame ParseGame(List<string> lines) {
       var game = new ChessGame();
-
-      var movesStarted = false;
-      var movesSB = new StringBuilder();
 
       foreach (var line in lines) {
         if (line.StartsWith("[Event "))
@@ -90,14 +94,10 @@ namespace ChessBrowser
             game.Result = ParseResult(ExtractTagValue(line));
         else if (line.StartsWith("[Event Date "))
             game.EventDate = ParseDate(ExtractTagValue(line));
-        else if (string.IsNullOrWhiteSpace(line) && lines.Count > 0)
-            movesStarted = true;
-
-        if (movesStarted)
-          movesSB.Append(line).Append(' ');
+        else if (line.StartsWith("1.") || line.EndsWith("1-0") || line.EndsWith("0-1")
+        || line.EndsWith("1/2-1/2"))
+            game.Moves = line;
       }
-      game.Moves = movesSB.ToString().Trim();
-
       return game;
     }//end of parseGame helper method
 
@@ -113,8 +113,9 @@ namespace ChessBrowser
       //tries to parse
       //replaces any ? to 01
       //out key word passes arguments to methods as reference type
-      date = date.Replace('.', '-');
-      if (DateTime.TryParse(date.Replace("??", "01"), out DateTime parsedDate))
+      date = date.Replace('.', '-').Replace("??,", "01");
+      System.Diagnostics.Debug.WriteLine($"(date)");
+      if (DateTime.TryParse(date, out DateTime parsedDate))
           return parsedDate;
       //if parsing fails; returns a min value
       return DateTime.MinValue;
@@ -176,7 +177,7 @@ namespace ChessBrowser
         //uses the class member variables to extract proper values
         cmd.Parameters.AddWithValue("@Name", game.Event);
         cmd.Parameters.AddWithValue("@Site", game.Site);
-        cmd.Parameters.AddWithValue("@Date", game.EventDate);
+        cmd.Parameters.AddWithValue("@Date", game.EventDate.Date.ToString("yyyy-MM-dd"));
         await cmd.ExecuteNonQueryAsync();
       } //in this block it stops // error processing variable
       static async Task InsertPlayer(MySqlConnection conn, string playerName, int elo) {
