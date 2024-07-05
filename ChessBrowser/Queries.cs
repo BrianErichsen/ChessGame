@@ -15,6 +15,8 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace ChessBrowser
 {
@@ -40,86 +42,67 @@ namespace ChessBrowser
   static class PgnReader {
     //this is how a list of chessgames object is created based on file given as argument
     public static List<ChessGame> ReadPgnFile(string filePath) {
-      var games = new List<ChessGame>();
+      List<ChessGame> games = new List<ChessGame>();
       //make sure that file is in correct directory
       //System.Diagnostics.Debug.WriteLine($"String filepath is: {filePath}");
-      var fileLines = File.ReadAllLines(filePath);
+      string fileLines = File.ReadAllText(filePath);
       //each current game is a list of strings
-      var currentGame = new List<string>();
-      var movesStarted = false;
+      string[] currentGame = Regex.Split(fileLines, @"\r?\n\r?\n");
 
       //this is how we partition each game
-      foreach (var line in fileLines) {//for each line
-        if (string.IsNullOrWhiteSpace(line)) {//if blank line found
-          if (currentGame.Count > 0 && !movesStarted) {//and if again next blank line is found
-            games.Add(ParseGame(currentGame));
-            currentGame.Clear();
-          }
-        } else {
-          currentGame.Add(line);
-          if (line.StartsWith ("1.")) {
-            movesStarted = true;
-          }
+      for (int i = 0; i < currentGame.Length; i += 2) {
+        string line = currentGame[i];
+        string moves_ = i+1 < currentGame.Length ? currentGame[i + 1] : "";
+
+        ChessGame game = ParseGame(line);
+        if (game != null) {
+          game.Moves = moves_;
+          games.Add(game);
         }
-      }
-      
-      if (currentGame.Count > 0) {
-        games.Add(ParseGame(currentGame));
       }
       return games;
     }//end of helper method read PGN file
 
     //helper method Parsegame
-    private static ChessGame ParseGame(List<string> lines) {
-      var game = new ChessGame();
-
-      foreach (var line in lines) {
-        if (line.StartsWith("[Event "))
-            game.Event = ExtractTagValue(line);
-        else if (line.StartsWith("[Site "))
-            game.Site = ExtractTagValue(line);
-        else if (line.StartsWith("[Date "))
-            game.EventDate = ParseDate(line);
-        else if (line.StartsWith("[Round "))
-            game.Round = ExtractTagValue(line);
-        else if (line.StartsWith("[White "))
-            game.White = ExtractTagValue(line);
-        else if (line.StartsWith("[Black "))
-            game.Black = ExtractTagValue(line);
-        else if (line.StartsWith("[WhiteElo "))
-            game.WhiteElo = int.Parse(ExtractTagValue(line));
-        else if (line.StartsWith("[BlackElo "))
-            game.BlackElo = int.Parse(ExtractTagValue(line));
-        else if (line.StartsWith("[Result "))
-            game.Result = ParseResult(ExtractTagValue(line));
-        else if (line.StartsWith("[Event Date "))
-            game.EventDate = ParseDate(ExtractTagValue(line));
-        else if (line.StartsWith("1.") || line.EndsWith("1-0") || line.EndsWith("0-1")
-        || line.EndsWith("1/2-1/2"))
-            game.Moves = line;
+    private static ChessGame ParseGame(string line) {
+      ChessGame game = null;
+      MatchCollection tag = Regex.Matches(line, @"\[(\w+)\s""([^""]+)""\]");
+      if (tag.Count >= 7) {
+        game = new ChessGame();
+        string event_str = ExtractTagValue(tag, "Event");
+        //filters out illegal characters
+        event_str = Regex.Replace(event_str, @"[^\p{L}\p{N}\p{P}\p{Z}]", "");
+        game.Event = event_str;
+        game.Site = ExtractTagValue(tag, "Site");
+        string eventDate_str = ExtractTagValue(tag, "EventDate");
+        DateTime eventDate_;
+        if (!DateTime.TryParseExact(eventDate_str, "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out eventDate_)) {
+          eventDate_ = DateTime.MinValue;
+        }
+        game.EventDate = eventDate_;
+        game.Round = ExtractTagValue(tag, "Round");
+        game.White = ExtractTagValue(tag, "White");
+        game.Black = ExtractTagValue(tag, "Black");
+        game.WhiteElo = int.Parse(ExtractTagValue(tag, "WhiteElo"));
+        game.BlackElo = int.Parse(ExtractTagValue(tag, "BlackElo"));
+        game.Result = ParseResult(ExtractTagValue(tag, "Result"));
+        //empty at first;
+        game.Moves = "";
       }
       return game;
     }//end of parseGame helper method
 
     //Extracts the value of pgn line
     //matches any text within "" and captures inner content
-    private static string ExtractTagValue(string line) {
-      var match = Regex.Match(line, "\"([^\"]+)\"");
-      //determines if match was empty; if not returns value
-      return match.Success ? match.Groups[1].Value : string.Empty;
-    }
+    private static string ExtractTagValue(MatchCollection matches ,string line) {
+      foreach (Match match in matches) {
+        if (match.Groups[1].Value == line) {
+          return match.Groups[2].Value;
+        }
+      }
+      return null;
+    }//end of Extract Tag Value helper method
     //converts date from file to date object
-    private static DateTime ParseDate(string date) {
-      //tries to parse
-      //replaces any ? to 01
-      //out key word passes arguments to methods as reference type
-      date = date.Replace('.', '-').Replace("??,", "01");
-      System.Diagnostics.Debug.WriteLine($"(date)");
-      if (DateTime.TryParse(date, out DateTime parsedDate))
-          return parsedDate;
-      //if parsing fails; returns a min value
-      return DateTime.MinValue;
-    }
 
     //converts string to char denoting which player won
     private static char ParseResult(string result) {
@@ -146,7 +129,7 @@ namespace ChessBrowser
       // assuimg you've typed a user and password in the GUI
       string connection = mainPage.GetConnectionString();
 
-      var games = PgnReader.ReadPgnFile(PGNfilename);
+      List<ChessGame> games = PgnReader.ReadPgnFile(PGNfilename);
       mainPage.SetNumWorkItems(games.Count);
 
 
