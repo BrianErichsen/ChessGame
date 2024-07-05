@@ -46,7 +46,7 @@ namespace ChessBrowser
       //make sure that file is in correct directory
       //System.Diagnostics.Debug.WriteLine($"String filepath is: {filePath}");
       string fileLines = File.ReadAllText(filePath);
-      //each current game is a list of strings
+      //each current game is a list of strings split double empty lines
       string[] currentGame = Regex.Split(fileLines, @"\r?\n\r?\n");
 
       //this is how we partition each game
@@ -66,16 +66,20 @@ namespace ChessBrowser
     //helper method Parsegame
     private static ChessGame ParseGame(string line) {
       ChessGame game = null;
+      // \[ matches '[' char, w+ captures 1 or + words char, \s matches any whitespace
+      //'""' matches double quote adding + for a group
       MatchCollection tag = Regex.Matches(line, @"\[(\w+)\s""([^""]+)""\]");
       if (tag.Count >= 7) {
         game = new ChessGame();
         string event_str = ExtractTagValue(tag, "Event");
         //filters out illegal characters
+        //\p{L} matches  not (^) unicode letter, number, punctuation, separator
         event_str = Regex.Replace(event_str, @"[^\p{L}\p{N}\p{P}\p{Z}]", "");
         game.Event = event_str;
         game.Site = ExtractTagValue(tag, "Site");
         string eventDate_str = ExtractTagValue(tag, "EventDate");
         DateTime eventDate_;
+        //culture info - culture independent object
         if (!DateTime.TryParseExact(eventDate_str, "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out eventDate_)) {
           eventDate_ = DateTime.MinValue;
         }
@@ -152,11 +156,12 @@ namespace ChessBrowser
         catch ( Exception e )
         {
           System.Diagnostics.Debug.WriteLine( e.Message );
+          System.Diagnostics.Debug.WriteLine(e.StackTrace);
         }
       }
       //inserts data into the Events table
       static async Task InsertEvent(MySqlConnection conn, ChessGame game) {
-        var cmd = new MySqlCommand("INSERT INTO Events (Name, Site, Date) VALUES (@Name, @Site, @Date) ON DUPLICATE KEY UPDATE Name = Name", conn);
+        var cmd = new MySqlCommand("INSERT IGNORE INTO Events (Name, Site, Date) VALUES (@Name, @Site, @Date) ON DUPLICATE KEY UPDATE Name = Name", conn);
         //uses the class member variables to extract proper values
         cmd.Parameters.AddWithValue("@Name", game.Event);
         cmd.Parameters.AddWithValue("@Site", game.Site);
@@ -172,31 +177,33 @@ namespace ChessBrowser
       }
       static async Task InsertGame(MySqlConnection conn, ChessGame game) {
         //gets specific eID
+      
         var getEventId = new MySqlCommand("SELECT eID FROM Events WHERE Name = @Name AND Site = @Site AND Date = @Date", conn);
         getEventId.Parameters.AddWithValue("@Name", game.Event);
         getEventId.Parameters.AddWithValue("Site", game.Site);
         getEventId.Parameters.AddWithValue("@Date", game.EventDate);
         //stores eventID value into variable
-        var eventID = (int)(await getEventId.ExecuteNonQueryAsync());
+        var eventID = Convert.ToUInt64(getEventId.ExecuteScalar());
 
         //gets specific Players ID
         var getPlayerId = new MySqlCommand("SELECT pID FROM Players WHERE Name = @Name", conn);
         getPlayerId.Parameters.AddWithValue("@Name", game.White);
         //stores result of query into whitePlayerID
-        var whitePlayerId = (int)(await getEventId.ExecuteNonQueryAsync());
+        var whitePlayerId = Convert.ToUInt64(getPlayerId.ExecuteScalar());
         //does the query again but now with game.Black name's instead
         getPlayerId.Parameters["@Name"].Value = game.Black;
         //stores new query result into blackPlayerID
-        var blackPlayerId = (int)(await getEventId.ExecuteNonQueryAsync());
+        var blackPlayerId = Convert.ToUInt64(getPlayerId.ExecuteScalar());
 
-        var cmd = new MySqlCommand("INSERT INTO Games (Round, Result, Moves, BlackPlayer, WhitePlayer, eID) VALUES (@Round, @Result, @Moves, @BlackPlayer, @WhitePlayer, @eID)", conn);
-        cmd.Parameters.AddWithValue("@Round", game.Round);
-        cmd.Parameters.AddWithValue("@Result", game.Result);
-        cmd.Parameters.AddWithValue("@Moves", game.Moves);
-        cmd.Parameters.AddWithValue("@BlackPlayer", blackPlayerId);
-        cmd.Parameters.AddWithValue("@WhitePlayer", whitePlayerId);
-        cmd.Parameters.AddWithValue("@eID", eventID);
-        await getEventId.ExecuteNonQueryAsync();
+        using (MySqlCommand cmd = new MySqlCommand("INSERT IGNORE INTO Games (Round, Result, Moves, BlackPlayer, WhitePlayer, eID) VALUES (@Round, @Result, @Moves, @BlackPlayer, @WhitePlayer, @eID)", conn)) {
+          cmd.Parameters.AddWithValue("@Round", game.Round);
+          cmd.Parameters.AddWithValue("@Result", game.Result);
+          cmd.Parameters.AddWithValue("@Moves", game.Moves);
+          cmd.Parameters.AddWithValue("@BlackPlayer", blackPlayerId);
+          cmd.Parameters.AddWithValue("@WhitePlayer", whitePlayerId);
+          cmd.Parameters.AddWithValue("@eID", eventID);
+          await cmd.ExecuteNonQueryAsync();
+        }
       }//end of inner insert game
     }//end of insterGameData method
 
