@@ -290,8 +290,8 @@ namespace ChessBrowser
               cmd.Parameters.AddWithValue("@Winner", winner);
             if (useDate)
             {
-              cmd.Parameters.AddWithValue("@StartDate", start);
-              cmd.Parameters.AddWithValue("@EndDate", end);
+              cmd.Parameters.AddWithValue("@StartDate", start.ToString("yyyy-MM-dd"));
+              cmd.Parameters.AddWithValue("@EndDate", end.ToString("yyyy-MM-dd"));
             }
             using (var reader = cmd.ExecuteReader())
             {
